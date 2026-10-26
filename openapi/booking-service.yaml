@@ -1,0 +1,502 @@
+openapi: 3.0.3
+info:
+  title: Booking Service API
+  version: 3.0.0
+  description: |
+    Core Domain — owner of the lifecycle of the Reserva (PENDIENTE, CONFIRMADA,
+    CANCELADA, EXPIRADA). See 02-domain/domain-map.md and
+    02-domain/entities-and-rules.md.
+
+    Booking is a **participant** of the Saga `reservar`, not its driver:
+    property-workflow creates, confirms and cancels the Reserva through this
+    contract (ADR-009), and property-worker expires the ones left in
+    PENDIENTE (ADR-014). The events Booking publishes — `ReservaCreada`,
+    `ReservaConfirmada`, `ReservaCancelada`, `ReservaExpirada` — are in
+    02-domain/domain-events.md, not here.
+
+    ## Who calls what
+    | Caller | Operations |
+    |---|---|
+    | A person (GUEST, HOST) | read their own Reservas; cancel one of their own that is still PENDIENTE |
+    | An ADMIN | read the Reservas of every guest |
+    | property-workflow, with its service token | create, confirm, cancel |
+    | property-worker, with its service token | list the PENDIENTE ones, expire |
+
+    A person never creates a Reserva here: the client starts the Saga with
+    `POST /sagas/reservar` (workflow.yaml). An operation marked "service
+    credential only" answers `403 FORBIDDEN` to a person's token
+    (07-api/guidelines.md, D-C14).
+
+    ## Errors
+    Single error envelope (`_shared.yaml#ErrorResponse`) with fixed codes —
+    see 07-api/guidelines.md, D-C5 and D-C6. Which invariant was violated
+    goes in `message`, never in a code of its own.
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Through the API Gateway, in `develop` (05-architecture/deployment.md)
+  - url: http://booking-api:3001/api/v1
+    description: Inside the network `platform` — how the workflow and the worker reach it
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Reservas
+    description: Lifecycle of the Reserva
+  - name: Health
+    description: Health check of the service
+
+paths:
+  /health:
+    servers:
+      - url: http://booking-api:3001
+        description: At the root of the service, outside `/api/v1` and not routed by the gateway
+    get:
+      summary: Health check
+      description: >
+        Answers without a token (norm 5.3.12). A dependency that is down is
+        reported inside the `200` body: a service never answers `503` about
+        itself (07-api/guidelines.md, D-C6).
+      operationId: getHealth
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: The service is running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  timestamp:
+                    $ref: './_shared.yaml#/components/schemas/Timestamp'
+                  dependencies:
+                    type: object
+                    properties:
+                      database:
+                        type: string
+                        enum: [ok, degraded, down]
+                      broker:
+                        type: string
+                        enum: [ok, degraded, down]
+                        description: RabbitMQ. With the broker down, events wait in the outbox (ADR-005).
+                      catalog:
+                        type: string
+                        enum: [ok, degraded, down]
+                        description: Catalog's API. With it down, no Reserva can be created (ADR-015).
+              example:
+                status: ok
+                timestamp: '2024-01-15T10:30:00Z'
+                dependencies:
+                  database: ok
+                  broker: ok
+                  catalog: ok
+
+  /reservas:
+    get:
+      summary: List Reservas
+      description: >
+        Paginated, most recent first. A GUEST or HOST gets only their own
+        Reservas — backend of "Mis reservas" (12-ux-ui/navigation-map.md,
+        route /reservas). An ADMIN and a service credential get the Reservas
+        of every guest: that is how the job `expire-stale-reservations` of
+        property-worker finds the ones to expire (ADR-014).
+      operationId: listReservas
+      tags: [Reservas]
+      parameters:
+        - $ref: './_shared.yaml#/components/parameters/PageParam'
+        - $ref: './_shared.yaml#/components/parameters/LimitParam'
+        - name: estado
+          in: query
+          description: >
+            Filter by state. An unknown value is `400`. The interface groups
+            the four states into three tabs — see
+            12-ux-ui/navigation-map.md, Navigation rules.
+          schema:
+            type: string
+            enum: [PENDIENTE, CONFIRMADA, CANCELADA, EXPIRADA]
+        - name: creadaAntesDe
+          in: query
+          description: Only the Reservas created before this instant. The worker sends `now - PENDING_TTL`.
+          schema:
+            $ref: './_shared.yaml#/components/schemas/Timestamp'
+      responses:
+        '200':
+          description: One page of Reservas
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReservaResponse'
+                  meta:
+                    $ref: './_shared.yaml#/components/schemas/PaginatedMeta'
+        '400':
+          $ref: './_shared.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './_shared.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './_shared.yaml#/components/responses/InternalError'
+
+    post:
+      summary: Create a Reserva (step `crear-reserva`)
+      description: >
+        **Service credential only.** Creates a Reserva in PENDIENTE and locks
+        the dates of the Propiedad (INV-001). Before opening its transaction,
+        Booking reads the Propiedad from Catalog (`GET /propiedades/{id}`):
+        it rejects an unknown one, checks the capacity and computes
+        `montoTotalCents = precioNocheCents × nights` (ADR-015). The amount
+        never comes from the caller. Nothing is charged here: the workflow
+        charges in its next step.
+      operationId: crearReserva
+      tags: [Reservas]
+      parameters:
+        - $ref: './_shared.yaml#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearReservaRequest'
+      responses:
+        '200':
+          description: >
+            The `Idempotency-Key` was already used: the Reserva it created is
+            returned and nothing new is created (07-api/guidelines.md, D-C7).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservaResponse'
+        '201':
+          description: Reserva created in PENDIENTE
+          headers:
+            Location:
+              description: Route of the Reserva created
+              schema:
+                type: string
+                example: /api/v1/reservas/550e8400-e29b-41d4-a716-446655440000
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservaResponse'
+        '400':
+          description: >
+            A field or the `Idempotency-Key` is missing, `huespedes` is out of
+            range, or `fechaFin` is not after `fechaInicio`
+            (07-api/guidelines.md, D-C4).
+          content:
+            application/json:
+              schema:
+                $ref: './_shared.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: VALIDATION_ERROR
+                message: the request has invalid fields
+                details:
+                  - field: fechaFin
+                    message: must be after fechaInicio
+                traceId: 550e8400-e29b-41d4-a716-446655440000
+        '401':
+          $ref: './_shared.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './_shared.yaml#/components/responses/Forbidden'
+        '422':
+          description: >
+            A business rule stops the creation: the dates overlap another
+            PENDIENTE or CONFIRMADA Reserva of the same Propiedad (INV-001),
+            the Propiedad does not exist, or `huespedes` is greater than its
+            capacity (ADR-015). `message` says which.
+          content:
+            application/json:
+              schema:
+                $ref: './_shared.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: BUSINESS_RULE_VIOLATION
+                message: >-
+                  the dates overlap reservation
+                  7c9e6679-7425-40de-944b-e07fc1f90ae7 of this property
+                traceId: 550e8400-e29b-41d4-a716-446655440000
+        '500':
+          description: >
+            Unhandled error, or Catalog did not answer within its time limit:
+            nothing was created (ADR-015, rule 4).
+          content:
+            application/json:
+              schema:
+                $ref: './_shared.yaml#/components/schemas/ErrorResponse'
+
+  /reservas/{id}:
+    parameters:
+      - $ref: './_shared.yaml#/components/parameters/IdParam'
+
+    get:
+      summary: Get a Reserva by id
+      description: >
+        Backend of the reservation detail (12-ux-ui/navigation-map.md, route
+        /reservas/:reservaId). Allowed to the guest who owns it, an ADMIN or
+        a service credential.
+      operationId: getReservaById
+      tags: [Reservas]
+      responses:
+        '200':
+          description: The Reserva
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservaResponse'
+        '400':
+          $ref: './_shared.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './_shared.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './_shared.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './_shared.yaml#/components/responses/NotFound'
+
+  /reservas/{id}/confirmar:
+    parameters:
+      - $ref: './_shared.yaml#/components/parameters/IdParam'
+
+    post:
+      summary: Confirm a Reserva (step `confirmar-reserva`)
+      description: >
+        **Service credential only.** Moves the Reserva from PENDIENTE to
+        CONFIRMADA and writes `ReservaConfirmada` to the outbox in the same
+        transaction.
+      operationId: confirmarReserva
+      tags: [Reservas]
+      parameters:
+        - $ref: '#/components/parameters/SagaKeyHeader'
+      responses:
+        '200':
+          description: The Reserva, now CONFIRMADA
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservaResponse'
+        '400':
+          $ref: './_shared.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './_shared.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './_shared.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './_shared.yaml#/components/responses/NotFound'
+        '422':
+          description: >
+            The Reserva is not PENDIENTE (INV-002). This includes one that is
+            already CONFIRMADA: confirming twice is `422` (norm, Annex C).
+            The workflow settles a `422` by reading the Reserva — see
+            workflow-endpoint-fiches.md.
+          content:
+            application/json:
+              schema:
+                $ref: './_shared.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_STATUS_TRANSITION
+                message: a reservation in state EXPIRADA cannot be confirmed
+                traceId: 550e8400-e29b-41d4-a716-446655440000
+
+  /reservas/{id}/cancelar:
+    parameters:
+      - $ref: './_shared.yaml#/components/parameters/IdParam'
+
+    post:
+      summary: Cancel a Reserva that is still PENDIENTE
+      description: >
+        Called by the guest who owns the Reserva, or by property-workflow
+        as the compensation of step `crear-reserva`. Moves
+        the Reserva to CANCELADA, releases the dates and writes
+        `ReservaCancelada` to the outbox. A CONFIRMADA Reserva cannot be
+        cancelled (01-context/scope.md, Out of Scope #4); the interface hides
+        the button (12-ux-ui/navigation-map.md, Flow 3).
+      operationId: cancelarReserva
+      tags: [Reservas]
+      parameters:
+        - $ref: '#/components/parameters/SagaKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelarReservaRequest'
+      responses:
+        '200':
+          description: >
+            The Reserva, CANCELADA. Also the answer when it was already
+            CANCELADA: nothing changes and no event is published, so a
+            compensation can run more than once (ADR-009, rule 5).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservaResponse'
+        '400':
+          $ref: './_shared.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './_shared.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './_shared.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './_shared.yaml#/components/responses/NotFound'
+        '422':
+          description: The Reserva is CONFIRMADA or EXPIRADA (INV-002).
+          content:
+            application/json:
+              schema:
+                $ref: './_shared.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_STATUS_TRANSITION
+                message: a reservation in state CONFIRMADA cannot be cancelled
+                traceId: 550e8400-e29b-41d4-a716-446655440000
+
+  /reservas/{id}/expirar:
+    parameters:
+      - $ref: './_shared.yaml#/components/parameters/IdParam'
+
+    post:
+      summary: Expire a Reserva left in PENDIENTE
+      description: >
+        **Service credential only.** Called by the job
+        `expire-stale-reservations` of property-worker (ADR-014). Moves the
+        Reserva to EXPIRADA with `motivoCierre: TIMEOUT_PAGO_EXCEDIDO`,
+        releases the dates and writes `ReservaExpirada` to the outbox.
+      operationId: expirarReserva
+      tags: [Reservas]
+      responses:
+        '200':
+          description: >
+            The Reserva, EXPIRADA. Also the answer when it was already
+            EXPIRADA: the job is safe to run twice.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservaResponse'
+        '400':
+          $ref: './_shared.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './_shared.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './_shared.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './_shared.yaml#/components/responses/NotFound'
+        '422':
+          description: >
+            The Reserva is CONFIRMADA or CANCELADA (INV-002). The worker
+            counts it and does not retry.
+          content:
+            application/json:
+              schema:
+                $ref: './_shared.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_STATUS_TRANSITION
+                message: a reservation in state CONFIRMADA cannot be expired
+                traceId: 550e8400-e29b-41d4-a716-446655440000
+
+components:
+  schemas:
+    CrearReservaRequest:
+      type: object
+      required: [usuarioId, propiedadId, fechaInicio, fechaFin, huespedes]
+      properties:
+        usuarioId:
+          allOf:
+            - $ref: './_shared.yaml#/components/schemas/UUID'
+          description: The guest the Reserva is for. The workflow copies it from the `sub` of the guest's token.
+        propiedadId:
+          $ref: './_shared.yaml#/components/schemas/UUID'
+        fechaInicio:
+          type: string
+          format: date
+          description: Check-in day, included
+        fechaFin:
+          type: string
+          format: date
+          description: Check-out day, not included — half-open range (07-api/guidelines.md, D-C4)
+        huespedes:
+          type: integer
+          minimum: 1
+          maximum: 20
+
+    CancelarReservaRequest:
+      type: object
+      properties:
+        motivo:
+          type: string
+          description: >
+            Read only from a service credential: the workflow sends the
+            `motivoRechazo` of the Pago, or `SAGA_COMPENSADA` — also the
+            default — when the step failed for another reason. The body of a
+            person is ignored: that cancellation is always recorded as
+            `CANCELADA_POR_HUESPED`.
+          enum: [SAGA_COMPENSADA, FONDOS_INSUFICIENTES, TARJETA_RECHAZADA, TARJETA_VENCIDA, PASARELA_NO_DISPONIBLE]
+
+    ReservaResponse:
+      description: A Reserva
+      allOf:
+        - $ref: './_shared.yaml#/components/schemas/AuditFields'
+        - type: object
+          required: [id, propiedadId, usuarioId, fechaInicio, fechaFin, montoTotalCents, moneda, estado]
+          properties:
+            id:
+              $ref: './_shared.yaml#/components/schemas/UUID'
+            propiedadId:
+              $ref: './_shared.yaml#/components/schemas/UUID'
+            usuarioId:
+              $ref: './_shared.yaml#/components/schemas/UUID'
+            fechaInicio:
+              type: string
+              format: date
+            fechaFin:
+              type: string
+              format: date
+            montoTotalCents:
+              type: integer
+              description: >
+                Total in cents (07-api/guidelines.md, D-C8), computed by
+                Booking when the Reserva is created and never recalculated.
+              example: 157500000
+            moneda:
+              type: string
+              description: ISO 4217 code of the Propiedad's price
+              example: COP
+            estado:
+              type: string
+              enum: [PENDIENTE, CONFIRMADA, CANCELADA, EXPIRADA]
+            motivoCierre:
+              type: string
+              description: Why the Reserva was closed. Present only when `estado` is CANCELADA or EXPIRADA.
+              enum:
+                - CANCELADA_POR_HUESPED
+                - SAGA_COMPENSADA
+                - TIMEOUT_PAGO_EXCEDIDO
+                - FONDOS_INSUFICIENTES
+                - TARJETA_RECHAZADA
+                - TARJETA_VENCIDA
+                - PASARELA_NO_DISPONIBLE
+
+  parameters:
+    SagaKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        The workflow sends a key on every call of the Saga (ADR-009, rule 3):
+        `<sagaId>:confirmar-reserva`, or `<sagaId>:crear-reserva:compensar`
+        on a cancellation. This operation creates nothing, so the key is
+        accepted and not stored; a repetition follows D-C6.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+
+  securitySchemes:
+    bearerAuth:
+      $ref: './_shared.yaml#/components/securitySchemes/bearerAuth'
