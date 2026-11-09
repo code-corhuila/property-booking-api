@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.UUID;
@@ -113,5 +114,20 @@ class ReservaTest {
 
         assertDoesNotThrow(() -> nueva.validarSinSuperposicion(List.of(cancelada, otraPropiedad, hastaElDia15)));
         assertDoesNotThrow(() -> nueva.validarSinSuperposicion(List.of(nueva)));
+    }
+
+    @Test
+    void restoreRebuildsAStoredReservaWithoutEvents() {
+        ReservaId id = ReservaId.nueva();
+        java.time.Instant at = java.time.Instant.parse("2026-11-08T10:00:00Z");
+        Reserva r = Reserva.restore(id, PROPIEDAD, HUESPED, rango("2026-12-10", "2026-12-15"), new Money(450000, "COP"),
+                EstadoReserva.CANCELADA, "SAGA_COMPENSADA", at, at.plusSeconds(5));
+
+        assertEquals(id, r.getId());
+        assertEquals(EstadoReserva.CANCELADA, r.getEstado());
+        assertEquals("SAGA_COMPENSADA", r.getMotivoCierre());
+        assertEquals(at, r.getCreatedAt());
+        assertEquals(at.plusSeconds(5), r.getUpdatedAt());
+        assertTrue(r.obtenerEventosDominio().isEmpty());
     }
 }

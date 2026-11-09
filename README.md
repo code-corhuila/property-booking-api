@@ -15,8 +15,9 @@ booking-core/       domain + application — NO Spring dependency
   application/port/in/     what the service offers
   application/port/out/    what it needs
   application/usecase/     one use case per business operation
-booking-adapters/   Spring Web adapters (and persistence, later)
+booking-adapters/   Spring Web adapters and the Reserva store
   adapter/in/http/         RS256 verifier, auth and correlation filters, error envelope, /health
+  adapter/out/persistence/ where Reservas and their outbox events are stored
 booking-app/        Spring Boot application: the composition root
 deploy/             Dockerfile and this service's compose file
 ```
