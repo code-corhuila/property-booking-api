@@ -17,7 +17,7 @@ booking-core/       domain + application — NO Spring dependency
   application/usecase/     one use case per business operation
 booking-adapters/   Spring Web adapters and the Reserva store
   adapter/in/http/         RS256 verifier, auth and correlation filters, error envelope, /health
-  adapter/out/persistence/ where Reservas and their outbox events are stored
+  adapter/out/persistence/ the schema booking (JDBC); an in-memory twin only with PERSISTENCE=memory
 booking-app/        Spring Boot application: the composition root
 deploy/             Dockerfile and this service's compose file
 ```
@@ -43,11 +43,15 @@ Without Maven installed:
 docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-21 mvn -B verify
 ```
 
-### Integration tests
+### Storage and the integration tests
 
-The integration tests run against the real engine with the schema of
-`property-booking-db` applied, as `booking_app`, and only when `TEST_DATABASE_URL` is
-set; otherwise they are skipped (Annex C). CI prepares that database on every Pull
+The service stores Reservas, their keys and their outbox events in the schema
+`booking`, connecting as `booking_app` (`.env.example` lists the variables); without
+`DATABASE_URL` it does not start. The in-memory adapters run only with
+`PERSISTENCE=memory`, set explicitly for the HTTP tests or a local trial: never in an
+environment (norm 5.5.2). The integration tests run against the real engine with the
+schema of `property-booking-db` applied, and only when `TEST_DATABASE_URL` is set;
+otherwise they are skipped (Annex C). CI prepares that database on every Pull
 Request. Locally, with `property-booking-db` cloned as a sibling (or `BOOKING_DB_DIR`):
 
 ```bash
