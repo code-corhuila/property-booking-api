@@ -13,6 +13,8 @@ services:
       DATABASE_URL: jdbc:postgresql://postgres:5432/${PG_DATABASE:?set PG_DATABASE}
       DATABASE_USER: booking_app
       DATABASE_PASSWORD: ${BOOKING_APP_PASSWORD:?set BOOKING_APP_PASSWORD}
+      # Catalog's public API, read when a Reserva is created (ADR-015).
+      CATALOG_URL: http://catalog-api:3002
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["3001"]
     networks: [platform]

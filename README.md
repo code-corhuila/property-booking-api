@@ -18,6 +18,7 @@ booking-core/       domain + application — NO Spring dependency
 booking-adapters/   Spring Web adapters and the Reserva store
   adapter/in/http/         RS256 verifier, auth and correlation filters, error envelope, /health
   adapter/out/persistence/ the schema booking (JDBC); an in-memory twin only with PERSISTENCE=memory
+  adapter/out/catalog/     GET /propiedades/{id} of Catalog: price, currency, capacity (ADR-015)
 booking-app/        Spring Boot application: the composition root
 deploy/             Dockerfile and this service's compose file
 ```

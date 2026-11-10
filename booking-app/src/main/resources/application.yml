@@ -27,3 +27,10 @@ booking:
     password: ${DATABASE_PASSWORD:}
     pool-max: ${DB_POOL_MAX:10}
     statement-timeout-ms: ${DB_STATEMENT_TIMEOUT_MS:5000}
+  catalog:
+    # GET /propiedades/{id} of Catalog (ADR-015). Worst case: 3 x 2 s + backoff, inside the
+    # workflow's 10 s for step crear-reserva.
+    url: ${CATALOG_URL:http://catalog-api:3002}
+    timeout-ms: ${CATALOG_TIMEOUT_MS:2000}
+    max-attempts: ${CATALOG_MAX_ATTEMPTS:3}
+    backoff-ms: ${CATALOG_BACKOFF_MS:100}
