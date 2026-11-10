@@ -8,6 +8,7 @@ import co.edu.corhuila.property.booking.adapter.out.persistence.InMemoryReservaR
 import co.edu.corhuila.property.booking.adapter.out.persistence.JdbcReservaRepository;
 import co.edu.corhuila.property.booking.application.port.out.PropiedadCatalogPort;
 import co.edu.corhuila.property.booking.application.port.out.ReservaRepository;
+import co.edu.corhuila.property.booking.application.usecase.ReservaService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -52,6 +53,11 @@ public class BookingConfiguration {
                                           @Value("${booking.catalog.max-attempts}") int maxAttempts,
                                           @Value("${booking.catalog.backoff-ms}") long backoffMs) {
         return new HttpPropiedadCatalog(url, Duration.ofMillis(timeoutMs), maxAttempts, Duration.ofMillis(backoffMs));
+    }
+
+    @Bean
+    ReservaService reservaService(ReservaRepository reservas, PropiedadCatalogPort catalog) {
+        return new ReservaService(reservas, catalog);
     }
 
     @Bean

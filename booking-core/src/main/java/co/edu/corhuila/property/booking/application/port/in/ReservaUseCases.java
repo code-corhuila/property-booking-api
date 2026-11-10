@@ -1,0 +1,22 @@
+package co.edu.corhuila.property.booking.application.port.in;
+
+import co.edu.corhuila.property.booking.domain.model.Reserva;
+import java.time.LocalDate;
+import java.util.UUID;
+
+/** What the service offers about Reservas. Inbound adapters depend on these interfaces only. */
+public final class ReservaUseCases {
+
+    private ReservaUseCases() { }
+
+    /** E-01, step crear-reserva. The shape was already validated by the inbound adapter. */
+    public record CrearReservaCommand(Caller caller, UUID usuarioId, UUID propiedadId, LocalDate fechaInicio,
+                                      LocalDate fechaFin, int huespedes, String idempotencyKey, String correlationId) { }
+
+    /** created is false when the key was already used: the Reserva of the first request. */
+    public record Creation(Reserva reserva, boolean created) { }
+
+    public interface CrearReserva {
+        Creation crear(CrearReservaCommand command);
+    }
+}
