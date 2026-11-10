@@ -3,13 +3,16 @@ package co.edu.corhuila.property.booking.app;
 import co.edu.corhuila.property.booking.adapter.in.http.AuthFilter;
 import co.edu.corhuila.property.booking.adapter.in.http.CorrelationFilter;
 import co.edu.corhuila.property.booking.adapter.in.http.Rs256Verifier;
+import co.edu.corhuila.property.booking.adapter.out.catalog.HttpPropiedadCatalog;
 import co.edu.corhuila.property.booking.adapter.out.persistence.InMemoryReservaRepository;
 import co.edu.corhuila.property.booking.adapter.out.persistence.JdbcReservaRepository;
+import co.edu.corhuila.property.booking.application.port.out.PropiedadCatalogPort;
 import co.edu.corhuila.property.booking.application.port.out.ReservaRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -37,6 +40,18 @@ public class BookingConfiguration {
                     @Value("${booking.database.pool-max:10}") int poolMax,
                     @Value("${booking.database.statement-timeout-ms:5000}") int statementTimeoutMs) {
         return Storage.connect(persistence, url, user, password, poolMax, statementTimeoutMs);
+    }
+
+    /**
+     * Catalog's public API (ADR-015). Every limit is configuration with a default: the
+     * attempts with their backoff fit well inside the workflow's limit for the step.
+     */
+    @Bean
+    PropiedadCatalogPort propiedadCatalog(@Value("${booking.catalog.url}") String url,
+                                          @Value("${booking.catalog.timeout-ms}") long timeoutMs,
+                                          @Value("${booking.catalog.max-attempts}") int maxAttempts,
+                                          @Value("${booking.catalog.backoff-ms}") long backoffMs) {
+        return new HttpPropiedadCatalog(url, Duration.ofMillis(timeoutMs), maxAttempts, Duration.ofMillis(backoffMs));
     }
 
     @Bean
