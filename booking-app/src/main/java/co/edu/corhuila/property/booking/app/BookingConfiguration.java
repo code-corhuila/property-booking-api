@@ -4,13 +4,13 @@ import co.edu.corhuila.property.booking.adapter.in.http.AuthFilter;
 import co.edu.corhuila.property.booking.adapter.in.http.CorrelationFilter;
 import co.edu.corhuila.property.booking.adapter.in.http.Rs256Verifier;
 import co.edu.corhuila.property.booking.adapter.out.persistence.InMemoryReservaRepository;
+import co.edu.corhuila.property.booking.adapter.out.persistence.JdbcReservaRepository;
 import co.edu.corhuila.property.booking.application.port.out.ReservaRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,13 +25,24 @@ import org.springframework.core.Ordered;
 public class BookingConfiguration {
 
     /**
-     * In memory ONLY when PERSISTENCE=memory is set, for tests and local development:
-     * never by default (norm 5.5.2). The JDBC adapter of the schema booking comes next.
+     * PERSISTENCE=postgres (the default) needs DATABASE_URL, DATABASE_USER (booking_app
+     * in the platform) and DATABASE_PASSWORD: without them the service does not start.
+     * PERSISTENCE=memory is for tests and local development only (norm 5.5.2).
      */
     @Bean
-    @ConditionalOnProperty(name = "booking.persistence", havingValue = "memory")
-    ReservaRepository reservaRepository() {
-        return new InMemoryReservaRepository();
+    Storage storage(@Value("${booking.persistence:postgres}") String persistence,
+                    @Value("${booking.database.url:}") String url,
+                    @Value("${booking.database.user:}") String user,
+                    @Value("${booking.database.password:}") String password,
+                    @Value("${booking.database.pool-max:10}") int poolMax,
+                    @Value("${booking.database.statement-timeout-ms:5000}") int statementTimeoutMs) {
+        return Storage.connect(persistence, url, user, password, poolMax, statementTimeoutMs);
+    }
+
+    @Bean
+    ReservaRepository reservaRepository(Storage storage) {
+        return storage.inMemory() ? new InMemoryReservaRepository()
+                : new JdbcReservaRepository(storage.jdbc(), storage.tx());
     }
 
     /**
