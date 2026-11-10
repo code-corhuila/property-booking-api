@@ -19,4 +19,9 @@ public final class ReservaUseCases {
     public interface CrearReserva {
         Creation crear(CrearReservaCommand command);
     }
+
+    /** E-18, step confirmar-reserva. */
+    public interface ConfirmarReserva {
+        Reserva confirmar(Caller caller, UUID id, String correlationId);
+    }
 }
