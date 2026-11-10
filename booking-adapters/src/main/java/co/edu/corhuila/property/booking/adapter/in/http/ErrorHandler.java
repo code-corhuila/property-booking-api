@@ -1,6 +1,8 @@
 package co.edu.corhuila.property.booking.adapter.in.http;
 
 import co.edu.corhuila.property.booking.adapter.in.http.ApiError.ValidationException;
+import co.edu.corhuila.property.booking.application.port.in.AccessDeniedException;
+import co.edu.corhuila.property.booking.application.port.in.NotAuthenticatedException;
 import co.edu.corhuila.property.booking.domain.model.DomainException;
 import co.edu.corhuila.property.booking.domain.model.InvalidStatusTransitionException;
 import org.slf4j.Logger;
@@ -41,6 +43,16 @@ public class ErrorHandler {
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     ResponseEntity<ApiError> method(HttpRequestMethodNotSupportedException e) {
         return respond(HttpStatus.METHOD_NOT_ALLOWED, ApiError.of(ApiError.NOT_FOUND, "method not allowed on this route"));
+    }
+
+    @ExceptionHandler(NotAuthenticatedException.class)
+    ResponseEntity<ApiError> notAuthenticated(NotAuthenticatedException e) {
+        return respond(HttpStatus.UNAUTHORIZED, ApiError.of(ApiError.UNAUTHORIZED, e.getMessage()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ApiError> forbidden(AccessDeniedException e) {
+        return respond(HttpStatus.FORBIDDEN, ApiError.of(ApiError.FORBIDDEN, e.getMessage()));
     }
 
     @ExceptionHandler(InvalidStatusTransitionException.class)
