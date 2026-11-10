@@ -3,11 +3,14 @@ package co.edu.corhuila.property.booking.app;
 import co.edu.corhuila.property.booking.adapter.in.http.AuthFilter;
 import co.edu.corhuila.property.booking.adapter.in.http.CorrelationFilter;
 import co.edu.corhuila.property.booking.adapter.in.http.Rs256Verifier;
+import co.edu.corhuila.property.booking.adapter.out.persistence.InMemoryReservaRepository;
+import co.edu.corhuila.property.booking.application.port.out.ReservaRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,6 +23,16 @@ import org.springframework.core.Ordered;
  */
 @Configuration
 public class BookingConfiguration {
+
+    /**
+     * In memory ONLY when PERSISTENCE=memory is set, for tests and local development:
+     * never by default (norm 5.5.2). The JDBC adapter of the schema booking comes next.
+     */
+    @Bean
+    @ConditionalOnProperty(name = "booking.persistence", havingValue = "memory")
+    ReservaRepository reservaRepository() {
+        return new InMemoryReservaRepository();
+    }
 
     /**
      * JWT_PUBLIC_KEY (the PEM itself; a one-line value with literal \n escapes, as

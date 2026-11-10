@@ -1,6 +1,7 @@
 package co.edu.corhuila.property.booking.domain.model;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -33,8 +34,32 @@ public class Reserva {
         this.fechas = fechas;
         this.total = total;
         this.estado = estado;
-        this.createdAt = Instant.now();
+        this.createdAt = now();
         this.updatedAt = this.createdAt;
+    }
+
+    /** Rebuilds a Reserva the persistence adapter read: no rule runs and no event is raised. */
+    public static Reserva restore(ReservaId id, UUID propiedadId, UUID usuarioId, DateRange fechas, Money total,
+                                  EstadoReserva estado, String motivoCierre, Instant createdAt, Instant updatedAt) {
+        return new Reserva(id, propiedadId, usuarioId, fechas, total, estado, motivoCierre, createdAt, updatedAt);
+    }
+
+    private Reserva(ReservaId id, UUID propiedadId, UUID usuarioId, DateRange fechas, Money total,
+                    EstadoReserva estado, String motivoCierre, Instant createdAt, Instant updatedAt) {
+        this.id = id;
+        this.propiedadId = propiedadId;
+        this.usuarioId = usuarioId;
+        this.fechas = fechas;
+        this.total = total;
+        this.estado = estado;
+        this.motivoCierre = motivoCierre;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
+
+    /** Microseconds: the precision PostgreSQL keeps, so a stored Reserva reads back equal. */
+    private static Instant now() {
+        return Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     public static Reserva crear(UUID propiedadId, UUID usuarioId,
@@ -72,7 +97,7 @@ public class Reserva {
     public void confirmar() {
         validarEstadoPendiente("confirmar");   // confirming twice is a violation (INV-002)
         this.estado = EstadoReserva.CONFIRMADA;
-        this.updatedAt = Instant.now();
+        this.updatedAt = now();
         this.eventosDominio.add(new ReservaConfirmadaEvent(this.id, this.propiedadId));
     }
 
@@ -81,7 +106,7 @@ public class Reserva {
         validarEstadoPendiente("cancelar");
         this.estado = EstadoReserva.CANCELADA;
         this.motivoCierre = motivo;
-        this.updatedAt = Instant.now();
+        this.updatedAt = now();
         this.eventosDominio.add(new ReservaCanceladaEvent(this.id, this.propiedadId, motivo));
     }
 
@@ -90,7 +115,7 @@ public class Reserva {
         validarEstadoPendiente("expirar");
         this.estado = EstadoReserva.EXPIRADA;
         this.motivoCierre = motivo;
-        this.updatedAt = Instant.now();
+        this.updatedAt = now();
         this.eventosDominio.add(new ReservaExpiradaEvent(this.id, this.propiedadId, motivo));
     }
 
