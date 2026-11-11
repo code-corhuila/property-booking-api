@@ -19,6 +19,24 @@ services:
     expose: ["3001"]
     networks: [platform]
 
+  # The outbox relay (ADR-005; norm 5.3.11): the same image, another process. It reads the
+  # unpublished rows of booking.outbox_event and publishes them to the exchange reservas of
+  # RabbitMQ as the broker user booking; a row is marked only after the broker confirms it.
+  # One per environment. It receives no requests: no port.
+  booking-relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["--outbox-relay"]
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${PG_DATABASE:?set PG_DATABASE}
+      DATABASE_USER: booking_app
+      DATABASE_PASSWORD: ${BOOKING_APP_PASSWORD:?set BOOKING_APP_PASSWORD}
+      BROKER_HOST: rabbitmq
+      BROKER_USER: booking
+      BROKER_PASSWORD: ${BOOKING_BROKER_PASSWORD:?set BOOKING_BROKER_PASSWORD}
+    networks: [platform]
+
 networks:
   platform:
     name: platform
