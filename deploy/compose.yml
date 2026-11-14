@@ -1,0 +1,43 @@
+# This service only. property-infra-postgres includes this file to compose the platform.
+
+services:
+  booking-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      PORT: "3001"
+      # Public key of identity-service, one line with \n escapes. Never versioned.
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?set JWT_PUBLIC_KEY}
+      # The schema booking of the single PostgreSQL instance, as booking_app (Annex J.7).
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${PG_DATABASE:?set PG_DATABASE}
+      DATABASE_USER: booking_app
+      DATABASE_PASSWORD: ${BOOKING_APP_PASSWORD:?set BOOKING_APP_PASSWORD}
+      # Catalog's public API, read when a Reserva is created (ADR-015).
+      CATALOG_URL: http://catalog-api:3002
+    # expose, not ports: only the gateway is reachable from the host.
+    expose: ["3001"]
+    networks: [platform]
+
+  # The outbox relay (ADR-005; norm 5.3.11): the same image, another process. It reads the
+  # unpublished rows of booking.outbox_event and publishes them to the exchange reservas of
+  # RabbitMQ as the broker user booking; a row is marked only after the broker confirms it.
+  # One per environment. It receives no requests: no port.
+  booking-relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["--outbox-relay"]
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${PG_DATABASE:?set PG_DATABASE}
+      DATABASE_USER: booking_app
+      DATABASE_PASSWORD: ${BOOKING_APP_PASSWORD:?set BOOKING_APP_PASSWORD}
+      BROKER_HOST: rabbitmq
+      BROKER_USER: booking
+      BROKER_PASSWORD: ${BOOKING_BROKER_PASSWORD:?set BOOKING_BROKER_PASSWORD}
+    networks: [platform]
+
+networks:
+  platform:
+    name: platform
+    external: true
