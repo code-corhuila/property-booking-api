@@ -24,4 +24,14 @@ public final class ReservaUseCases {
     public interface ConfirmarReserva {
         Reserva confirmar(Caller caller, UUID id, String correlationId);
     }
+
+    /** E-04. motivo is read only from a service; null records SAGA_COMPENSADA. */
+    public interface CancelarReserva {
+        Reserva cancelar(Caller caller, UUID id, String motivo, String correlationId);
+    }
+
+    /** E-19, the job expire-stale-reservations of property-worker (ADR-014). */
+    public interface ExpirarReserva {
+        Reserva expirar(Caller caller, UUID id, String correlationId);
+    }
 }
