@@ -15,13 +15,14 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** E-01 POST /reservas, step crear-reserva. Validates the SHAPE of the input and holds no rule. */
+/** E-01 POST /reservas and the transitions of the Reserva. Validates the SHAPE of the input and holds no rule. */
 @RestController
 @RequestMapping("/api/v1/reservas")
 public class ReservaController {
@@ -31,9 +32,11 @@ public class ReservaController {
                                       BigDecimal huespedes) { }
 
     private final ReservaUseCases.CrearReserva crear;
+    private final ReservaUseCases.ConfirmarReserva confirmar;
 
-    public ReservaController(ReservaUseCases.CrearReserva crear) {
+    public ReservaController(ReservaUseCases.CrearReserva crear, ReservaUseCases.ConfirmarReserva confirmar) {
         this.crear = crear;
+        this.confirmar = confirmar;
     }
 
     @PostMapping
@@ -64,6 +67,26 @@ public class ReservaController {
         return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK)   // 200: a retry
                 .header("Location", "/api/v1/reservas/" + result.reserva().getId().value())
                 .body(ReservaResponse.of(result.reserva()));
+    }
+
+    /**
+     * E-18, step confirmar-reserva. The workflow sends <sagaId>:confirmar-reserva: it is
+     * accepted and not stored, since the operation creates nothing (D-C7).
+     */
+    @PostMapping("/{id}/confirmar")
+    public ReservaResponse confirmar(@PathVariable String id,
+                                     @RequestHeader(name = "Idempotency-Key", required = false) String key,
+                                     HttpServletRequest request) {
+        UUID reservaId = ReservaViews.requireId(id);
+        requireOptionalKey(key);
+        return ReservaResponse.of(confirmar.confirmar(ReservaViews.caller(request), reservaId, ReservaViews.correlationId()));
+    }
+
+    static void requireOptionalKey(String key) {
+        if (key != null && !ReservaViews.validKey(key)) {
+            throw new ValidationException("the request has invalid fields",
+                    List.of(new FieldError("Idempotency-Key", "8 to 128 characters")));
+        }
     }
 
     private static UUID uuid(String value, String field, List<FieldError> problems) {
