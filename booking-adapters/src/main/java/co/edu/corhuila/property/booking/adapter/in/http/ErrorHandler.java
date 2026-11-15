@@ -3,6 +3,7 @@ package co.edu.corhuila.property.booking.adapter.in.http;
 import co.edu.corhuila.property.booking.adapter.in.http.ApiError.ValidationException;
 import co.edu.corhuila.property.booking.application.port.in.AccessDeniedException;
 import co.edu.corhuila.property.booking.application.port.in.NotAuthenticatedException;
+import co.edu.corhuila.property.booking.application.port.in.ReservaNoEncontradaException;
 import co.edu.corhuila.property.booking.domain.model.DomainException;
 import co.edu.corhuila.property.booking.domain.model.InvalidStatusTransitionException;
 import org.slf4j.Logger;
@@ -53,6 +54,11 @@ public class ErrorHandler {
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiError> forbidden(AccessDeniedException e) {
         return respond(HttpStatus.FORBIDDEN, ApiError.of(ApiError.FORBIDDEN, e.getMessage()));
+    }
+
+    @ExceptionHandler(ReservaNoEncontradaException.class)
+    ResponseEntity<ApiError> notFound(ReservaNoEncontradaException e) {
+        return respond(HttpStatus.NOT_FOUND, ApiError.of(ApiError.NOT_FOUND, e.getMessage()));
     }
 
     @ExceptionHandler(InvalidStatusTransitionException.class)

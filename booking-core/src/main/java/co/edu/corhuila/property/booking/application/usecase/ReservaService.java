@@ -1,5 +1,8 @@
 package co.edu.corhuila.property.booking.application.usecase;
 
+import co.edu.corhuila.property.booking.application.port.in.Caller;
+import co.edu.corhuila.property.booking.application.port.in.ReservaNoEncontradaException;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ConfirmarReserva;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CrearReserva;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CrearReservaCommand;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.Creation;
@@ -12,9 +15,10 @@ import co.edu.corhuila.property.booking.domain.model.Money;
 import co.edu.corhuila.property.booking.domain.model.Reserva;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
+import java.util.UUID;
 
 /** The use cases of the Reserva. It orchestrates; the rules live in Reserva and DateRange. */
-public class ReservaService implements CrearReserva {
+public class ReservaService implements CrearReserva, ConfirmarReserva {
 
     private final ReservaRepository reservas;
     private final PropiedadCatalogPort catalog;
@@ -53,5 +57,19 @@ public class ReservaService implements CrearReserva {
         ReservaRepository.Created created = reservas.create(reserva, c.idempotencyKey(),
                 ReservaEvents.of(reserva, c.correlationId()));
         return new Creation(created.reserva(), created.created());
+    }
+
+    /**
+     * HU-BOOK-003. Service credential only. Only a PENDIENTE Reserva is confirmed: any
+     * other state, CONFIRMADA included, is 422 and changes nothing (INV-002, D-C6). The
+     * state and ReservaConfirmada are written in one transaction.
+     */
+    @Override
+    public Reserva confirmar(Caller caller, UUID id, String correlationId) {
+        caller.requireService();
+        return reservas.change(id, reserva -> {
+            reserva.confirmar();
+            return ReservaEvents.of(reserva, correlationId);
+        }).orElseThrow(() -> new ReservaNoEncontradaException(id));
     }
 }
