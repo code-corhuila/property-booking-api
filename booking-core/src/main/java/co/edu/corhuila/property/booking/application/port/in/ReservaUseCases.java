@@ -1,7 +1,10 @@
 package co.edu.corhuila.property.booking.application.port.in;
 
+import co.edu.corhuila.property.booking.domain.model.EstadoReserva;
 import co.edu.corhuila.property.booking.domain.model.Reserva;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /** What the service offers about Reservas. Inbound adapters depend on these interfaces only. */
@@ -33,5 +36,20 @@ public final class ReservaUseCases {
     /** E-19, the job expire-stale-reservations of property-worker (ADR-014). */
     public interface ExpirarReserva {
         Reserva expirar(Caller caller, UUID id, String correlationId);
+    }
+
+    /** E-03. */
+    public interface ObtenerReserva {
+        Reserva obtener(Caller caller, UUID id);
+    }
+
+    /** E-02 filters: estado and creadaAntesDe are optional (null = no filter). */
+    public record ListarReservasQuery(EstadoReserva estado, Instant creadaAntesDe, int page, int limit) { }
+
+    public record ReservaPage(List<Reserva> items, long total, int page, int limit) { }
+
+    /** E-02. */
+    public interface ListarReservas {
+        ReservaPage listar(Caller caller, ListarReservasQuery query);
     }
 }
