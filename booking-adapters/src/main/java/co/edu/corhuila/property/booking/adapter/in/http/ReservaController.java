@@ -3,6 +3,7 @@ package co.edu.corhuila.property.booking.adapter.in.http;
 import co.edu.corhuila.property.booking.adapter.in.http.ApiError.FieldError;
 import co.edu.corhuila.property.booking.adapter.in.http.ApiError.ValidationException;
 import co.edu.corhuila.property.booking.adapter.in.http.ReservaViews.ReservaResponse;
+import co.edu.corhuila.property.booking.application.port.in.Caller;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CrearReservaCommand;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.Creation;
@@ -33,10 +34,21 @@ public class ReservaController {
 
     private final ReservaUseCases.CrearReserva crear;
     private final ReservaUseCases.ConfirmarReserva confirmar;
+    private final ReservaUseCases.CancelarReserva cancelar;
+    private final ReservaUseCases.ExpirarReserva expirar;
 
-    public ReservaController(ReservaUseCases.CrearReserva crear, ReservaUseCases.ConfirmarReserva confirmar) {
+    /** The codes a service may send as motivo (booking-service.yaml, CancelarReservaRequest). */
+    static final List<String> MOTIVOS = List.of("SAGA_COMPENSADA", "FONDOS_INSUFICIENTES", "TARJETA_RECHAZADA",
+            "TARJETA_VENCIDA", "PASARELA_NO_DISPONIBLE");
+
+    public record CancelarReservaRequest(String motivo) { }
+
+    public ReservaController(ReservaUseCases.CrearReserva crear, ReservaUseCases.ConfirmarReserva confirmar,
+                             ReservaUseCases.CancelarReserva cancelar, ReservaUseCases.ExpirarReserva expirar) {
         this.crear = crear;
         this.confirmar = confirmar;
+        this.cancelar = cancelar;
+        this.expirar = expirar;
     }
 
     @PostMapping
@@ -80,6 +92,32 @@ public class ReservaController {
         UUID reservaId = ReservaViews.requireId(id);
         requireOptionalKey(key);
         return ReservaResponse.of(confirmar.confirmar(ReservaViews.caller(request), reservaId, ReservaViews.correlationId()));
+    }
+
+    /**
+     * E-04. The workflow sends <sagaId>:crear-reserva:compensar, accepted and not stored.
+     * The body is read only from a service; the body of a person is ignored.
+     */
+    @PostMapping("/{id}/cancelar")
+    public ReservaResponse cancelar(@PathVariable String id, @RequestBody(required = false) CancelarReservaRequest body,
+                                    @RequestHeader(name = "Idempotency-Key", required = false) String key,
+                                    HttpServletRequest request) {
+        UUID reservaId = ReservaViews.requireId(id);
+        requireOptionalKey(key);
+        Caller caller = ReservaViews.caller(request);
+        String motivo = caller.service() && body != null ? body.motivo() : null;
+        if (motivo != null && !MOTIVOS.contains(motivo)) {
+            throw new ValidationException("the request has invalid fields",
+                    List.of(new FieldError("motivo", "must be one of " + String.join(", ", MOTIVOS))));
+        }
+        return ReservaResponse.of(cancelar.cancelar(caller, reservaId, motivo, ReservaViews.correlationId()));
+    }
+
+    /** E-19, called by the job expire-stale-reservations of property-worker (ADR-014). */
+    @PostMapping("/{id}/expirar")
+    public ReservaResponse expirar(@PathVariable String id, HttpServletRequest request) {
+        UUID reservaId = ReservaViews.requireId(id);
+        return ReservaResponse.of(expirar.expirar(ReservaViews.caller(request), reservaId, ReservaViews.correlationId()));
     }
 
     static void requireOptionalKey(String key) {
