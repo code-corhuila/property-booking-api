@@ -1,11 +1,14 @@
 package co.edu.corhuila.property.booking.application.usecase;
 
+import co.edu.corhuila.property.booking.application.port.in.AccessDeniedException;
 import co.edu.corhuila.property.booking.application.port.in.Caller;
 import co.edu.corhuila.property.booking.application.port.in.ReservaNoEncontradaException;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CancelarReserva;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ConfirmarReserva;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CrearReserva;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CrearReservaCommand;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.Creation;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ExpirarReserva;
 import co.edu.corhuila.property.booking.application.port.out.PropiedadCatalogPort;
 import co.edu.corhuila.property.booking.application.port.out.PropiedadCatalogPort.Propiedad;
 import co.edu.corhuila.property.booking.application.port.out.ReservaRepository;
@@ -18,7 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /** The use cases of the Reserva. It orchestrates; the rules live in Reserva and DateRange. */
-public class ReservaService implements CrearReserva, ConfirmarReserva {
+public class ReservaService implements CrearReserva, ConfirmarReserva, CancelarReserva, ExpirarReserva {
 
     private final ReservaRepository reservas;
     private final PropiedadCatalogPort catalog;
@@ -69,6 +72,41 @@ public class ReservaService implements CrearReserva, ConfirmarReserva {
         caller.requireService();
         return reservas.change(id, reserva -> {
             reserva.confirmar();
+            return ReservaEvents.of(reserva, correlationId);
+        }).orElseThrow(() -> new ReservaNoEncontradaException(id));
+    }
+
+    /**
+     * HU-BOOK-004. The guest who owns the Reserva, or a service compensating step
+     * crear-reserva; an ADMIN does not cancel the Reserva of a guest (D-C9). A person
+     * always records CANCELADA_POR_HUESPED. Already CANCELADA answers the Reserva again
+     * with no event, so a compensation can run twice; CONFIRMADA or EXPIRADA is 422.
+     */
+    @Override
+    public Reserva cancelar(Caller caller, UUID id, String motivo, String correlationId) {
+        return reservas.change(id, reserva -> {
+            String motivoCierre;
+            if (caller.service()) {
+                motivoCierre = motivo == null ? "SAGA_COMPENSADA" : motivo;
+            } else if (caller.personId().equals(reserva.getUsuarioId())) {
+                motivoCierre = "CANCELADA_POR_HUESPED";
+            } else {
+                throw new AccessDeniedException("only the guest who owns the reservation, or a service, cancels it");
+            }
+            reserva.cancelar(motivoCierre);
+            return ReservaEvents.of(reserva, correlationId);
+        }).orElseThrow(() -> new ReservaNoEncontradaException(id));
+    }
+
+    /**
+     * E-19 (ADR-014). Service credential only. TIMEOUT_PAGO_EXCEDIDO; already EXPIRADA
+     * answers again with no event; CONFIRMADA or CANCELADA is 422, which the worker counts.
+     */
+    @Override
+    public Reserva expirar(Caller caller, UUID id, String correlationId) {
+        caller.requireService();
+        return reservas.change(id, reserva -> {
+            reserva.expirar("TIMEOUT_PAGO_EXCEDIDO");
             return ReservaEvents.of(reserva, correlationId);
         }).orElseThrow(() -> new ReservaNoEncontradaException(id));
     }
