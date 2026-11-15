@@ -9,6 +9,10 @@ import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.Crea
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.CrearReservaCommand;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.Creation;
 import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ExpirarReserva;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ListarReservas;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ListarReservasQuery;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ObtenerReserva;
+import co.edu.corhuila.property.booking.application.port.in.ReservaUseCases.ReservaPage;
 import co.edu.corhuila.property.booking.application.port.out.PropiedadCatalogPort;
 import co.edu.corhuila.property.booking.application.port.out.PropiedadCatalogPort.Propiedad;
 import co.edu.corhuila.property.booking.application.port.out.ReservaRepository;
@@ -21,7 +25,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 /** The use cases of the Reserva. It orchestrates; the rules live in Reserva and DateRange. */
-public class ReservaService implements CrearReserva, ConfirmarReserva, CancelarReserva, ExpirarReserva {
+public class ReservaService implements CrearReserva, ConfirmarReserva, CancelarReserva, ExpirarReserva,
+        ObtenerReserva, ListarReservas {
 
     private final ReservaRepository reservas;
     private final PropiedadCatalogPort catalog;
@@ -109,5 +114,30 @@ public class ReservaService implements CrearReserva, ConfirmarReserva, CancelarR
             reserva.expirar("TIMEOUT_PAGO_EXCEDIDO");
             return ReservaEvents.of(reserva, correlationId);
         }).orElseThrow(() -> new ReservaNoEncontradaException(id));
+    }
+
+    /**
+     * HU-BOOK-006. The guest who owns it, an ADMIN or a service reads it; another person
+     * gets 403. A Reserva that does not exist is 404 for everyone (D-C6).
+     */
+    @Override
+    public Reserva obtener(Caller caller, UUID id) {
+        Reserva reserva = reservas.findById(id).orElseThrow(() -> new ReservaNoEncontradaException(id));
+        if (!caller.service() && !caller.isAdmin() && !caller.personId().equals(reserva.getUsuarioId())) {
+            throw new AccessDeniedException("the reservation belongs to another guest");
+        }
+        return reserva;
+    }
+
+    /**
+     * HU-BOOK-006 scenarios 4 and 5: a GUEST or HOST lists only their own (reservas:read
+     * is own-only); an ADMIN and a service list every guest's. Most recent first.
+     */
+    @Override
+    public ReservaPage listar(Caller caller, ListarReservasQuery q) {
+        UUID owner = caller.service() || caller.isAdmin() ? null : caller.personId();
+        ReservaRepository.Page page = reservas.findPage(new ReservaRepository.Filter(owner, q.estado(), q.creadaAntesDe()),
+                (q.page() - 1) * q.limit(), q.limit());
+        return new ReservaPage(page.items(), page.total(), q.page(), q.limit());
     }
 }
